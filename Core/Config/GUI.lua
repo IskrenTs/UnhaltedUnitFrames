@@ -664,7 +664,7 @@ local function CreateFrameSettings(containerParent, unit, unitHasParent, updateC
         local SpacingSlider = AG:Create("Slider")
         SpacingSlider:SetLabel("Frame Spacing")
         SpacingSlider:SetValue(FrameDB.Layout[5])
-        SpacingSlider:SetSliderValues(-1, 100, 0.1)
+        SpacingSlider:SetSliderValues(-10, 100, 0.1)
         SpacingSlider:SetRelativeWidth(0.33)
         SpacingSlider:SetCallback("OnValueChanged", function(_, _, value) FrameDB.Layout[5] = value updateCallback() end)
         LayoutContainer:AddChild(SpacingSlider)
