@@ -34,6 +34,92 @@ local UnitDBToUnitPrettyName = {
 local AnchorPoints = { { ["TOPLEFT"] = "Top Left", ["TOP"] = "Top", ["TOPRIGHT"] = "Top Right", ["LEFT"] = "Left", ["CENTER"] = "Center", ["RIGHT"] = "Right", ["BOTTOMLEFT"] = "Bottom Left", ["BOTTOM"] = "Bottom", ["BOTTOMRIGHT"] = "Bottom Right" }, { "TOPLEFT", "TOP", "TOPRIGHT", "LEFT", "CENTER", "RIGHT", "BOTTOMLEFT", "BOTTOM", "BOTTOMRIGHT", } }
 local FrameStrataList = {{ ["BACKGROUND"] = "Background", ["LOW"] = "Low", ["MEDIUM"] = "Medium", ["HIGH"] = "High", ["DIALOG"] = "Dialog", ["FULLSCREEN"] = "Fullscreen", ["FULLSCREEN_DIALOG"] = "Fullscreen Dialog", ["TOOLTIP"] = "Tooltip" }, { "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG", "FULLSCREEN", "FULLSCREEN_DIALOG", "TOOLTIP" }}
 
+local function GetAuraBaseFilter(auraDB)
+    return auraDB == "Buffs" and "HELPFUL" or "HARMFUL"
+end
+
+local function GetAuraFilterConfig(auraDB)
+    if not UUF.AURA_FILTERS or type(UUF.AURA_FILTERS[auraDB]) ~= "table" then
+        return {}
+    end
+    return UUF.AURA_FILTERS[auraDB]
+end
+
+local function GetAuraFilterToggleOrder(auraDB)
+    local auraFilterConfig = GetAuraFilterConfig(auraDB)
+    local baseFilter = GetAuraBaseFilter(auraDB)
+    local auraFilters = {}
+    for filterType, filterData in pairs(auraFilterConfig) do
+        if filterType ~= baseFilter and type(filterData) == "table" then
+            auraFilters[#auraFilters + 1] = filterType
+        end
+    end
+    table.sort(auraFilters, function(a, b)
+        local auraFilterA = (auraFilterConfig[a] and auraFilterConfig[a].Title) or a
+        local auraFilterB = (auraFilterConfig[b] and auraFilterConfig[b].Title) or b
+        if auraFilterA == auraFilterB then return a < b end
+        return auraFilterA < auraFilterB
+    end)
+    return auraFilters
+end
+
+local function ResolveAuraFilterSelectionKey(auraDB, filterString)
+    local auraFilterConfig = GetAuraFilterConfig(auraDB)
+    local baseFilter = GetAuraBaseFilter(auraDB)
+    if type(filterString) ~= "string" then return nil end
+    local decodedFilterString = filterString:gsub("||", "|")
+
+    if decodedFilterString ~= baseFilter and auraFilterConfig[decodedFilterString] then
+        return decodedFilterString
+    end
+
+    for filterType in decodedFilterString:gmatch("[^|]+") do
+        if filterType ~= baseFilter then
+            if auraFilterConfig[filterType] then
+                return filterType
+            end
+            local baseQualifiedFilter = baseFilter .. "|" .. filterType
+            if auraFilterConfig[baseQualifiedFilter] then
+                return baseQualifiedFilter
+            end
+        end
+    end
+
+    return nil
+end
+
+local function ParseAuraFilterSelections(auraDB, filterString)
+    local selectedFilters = {}
+    local selectedFilter = ResolveAuraFilterSelectionKey(auraDB, filterString)
+    if selectedFilter then selectedFilters[selectedFilter] = true end
+    return selectedFilters
+end
+
+local function GetSelectedAuraFilter(selectedFilters, orderedFilters)
+    for _, filterType in ipairs(orderedFilters) do
+        if selectedFilters[filterType] then
+            return filterType
+        end
+    end
+end
+
+local function SetSelectedAuraFilter(selectedFilters, orderedFilters, selectedFilter)
+    for _, filterType in ipairs(orderedFilters) do
+        selectedFilters[filterType] = filterType == selectedFilter and true or nil
+    end
+end
+
+local function BuildAuraFilterString(baseFilter, selectedFilters, orderedFilters)
+    local selectedFilter = GetSelectedAuraFilter(selectedFilters, orderedFilters)
+    return selectedFilter or baseFilter
+end
+
+local function EncodeAuraFilterStringForStorage(filterString)
+    if type(filterString) ~= "string" then return "" end
+    local decodedFilterString = filterString:gsub("||", "|")
+    return decodedFilterString:gsub("|", "||")
+end
+
 local Power = {
     [0] = "Mana",
     [1] = "Rage",
@@ -337,6 +423,32 @@ local function CreateTextureSettings(containerParent)
     BackgroundOpacitySlider:SetIsPercent(true)
     BackgroundOpacitySlider:SetCallback("OnValueChanged", function(_, _, value) for _, unitDB in pairs(UUF.db.profile.Units) do unitDB.HealthBar.BackgroundOpacity = value end UUF:UpdateAllUnitFrames() end)
     Container:AddChild(BackgroundOpacitySlider)
+
+    local CastBarContainer = GUIWidgets.CreateInlineGroup(Container, "Cast Bar")
+
+    local CastBarForegroundColourPicker = AG:Create("ColorPicker")
+    CastBarForegroundColourPicker:SetLabel("Foreground Colour")
+    local CR, CG, CB = 128/255, 128/255, 255/255
+    CastBarForegroundColourPicker:SetColor(CR, CG, CB)
+    CastBarForegroundColourPicker:SetRelativeWidth(0.33)
+    CastBarForegroundColourPicker:SetCallback("OnValueChanged", function(_, _, r, g, b, a) for _, unitDB in pairs(UUF.db.profile.Units) do if unitDB.CastBar then unitDB.CastBar.Foreground = {r, g, b} end end UUF:UpdateAllUnitFrames() end)
+    CastBarContainer:AddChild(CastBarForegroundColourPicker)
+
+    local CastBarBackgroundColourPicker = AG:Create("ColorPicker")
+    CastBarBackgroundColourPicker:SetLabel("Background Colour")
+    local CR2, CG2, CB2 = 34/255, 34/255, 34/255
+    CastBarBackgroundColourPicker:SetColor(CR2, CG2, CB2)
+    CastBarBackgroundColourPicker:SetRelativeWidth(0.33)
+    CastBarBackgroundColourPicker:SetCallback("OnValueChanged", function(_, _, r, g, b, a) for _, unitDB in pairs(UUF.db.profile.Units) do if unitDB.CastBar then unitDB.CastBar.Background = {r, g, b} end end UUF:UpdateAllUnitFrames() end)
+    CastBarContainer:AddChild(CastBarBackgroundColourPicker)
+
+    local CastBarInterruptibleColourPicker = AG:Create("ColorPicker")
+    CastBarInterruptibleColourPicker:SetLabel("Interruptible Colour")
+    local CR3, CG3, CB3 = 255/255, 64/255, 64/255
+    CastBarInterruptibleColourPicker:SetColor(CR3, CG3, CB3)
+    CastBarInterruptibleColourPicker:SetRelativeWidth(0.33)
+    CastBarInterruptibleColourPicker:SetCallback("OnValueChanged", function(_, _, r, g, b, a) for _, unitDB in pairs(UUF.db.profile.Units) do if unitDB.CastBar then unitDB.CastBar.NotInterruptibleColour = {r, g, b} end end UUF:UpdateAllUnitFrames() end)
+    CastBarContainer:AddChild(CastBarInterruptibleColourPicker)
 end
 
 local function CreateRangeSettings(containerParent)
@@ -731,15 +843,22 @@ local function CreateHealPredictionSettings(containerParent, unit, updateCallbac
     ShowAbsorbToggle:SetLabel("Show Absorbs")
     ShowAbsorbToggle:SetValue(HealPredictionDB.Absorbs.Enabled)
     ShowAbsorbToggle:SetCallback("OnValueChanged", function(_, _, value) HealPredictionDB.Absorbs.Enabled = value updateCallback() RefreshHealPredictionSettings() end)
-    ShowAbsorbToggle:SetRelativeWidth(0.5)
+    ShowAbsorbToggle:SetRelativeWidth(0.33)
     AbsorbSettings:AddChild(ShowAbsorbToggle)
 
     local UseStripedTextureAbsorbToggle = AG:Create("CheckBox")
     UseStripedTextureAbsorbToggle:SetLabel("Use Striped Texture")
     UseStripedTextureAbsorbToggle:SetValue(HealPredictionDB.Absorbs.UseStripedTexture)
     UseStripedTextureAbsorbToggle:SetCallback("OnValueChanged", function(_, _, value) HealPredictionDB.Absorbs.UseStripedTexture = value updateCallback() end)
-    UseStripedTextureAbsorbToggle:SetRelativeWidth(0.5)
+    UseStripedTextureAbsorbToggle:SetRelativeWidth(0.33)
     AbsorbSettings:AddChild(UseStripedTextureAbsorbToggle)
+
+    local MatchParentHeightToggle = AG:Create("CheckBox")
+    MatchParentHeightToggle:SetLabel("Match Parent Height")
+    MatchParentHeightToggle:SetValue(HealPredictionDB.Absorbs.MatchParentHeight)
+    MatchParentHeightToggle:SetCallback("OnValueChanged", function(_, _, value) HealPredictionDB.Absorbs.MatchParentHeight = value updateCallback() RefreshHealPredictionSettings() end)
+    MatchParentHeightToggle:SetRelativeWidth(0.33)
+    AbsorbSettings:AddChild(MatchParentHeightToggle)
 
     local AbsorbColourPicker = AG:Create("ColorPicker")
     AbsorbColourPicker:SetLabel("Absorb Colour")
@@ -756,6 +875,7 @@ local function CreateHealPredictionSettings(containerParent, unit, updateCallbac
     AbsorbHeightSlider:SetSliderValues(1, FrameDB.Height - 2, 0.1)
     AbsorbHeightSlider:SetRelativeWidth(0.33)
     AbsorbHeightSlider:SetCallback("OnValueChanged", function(_, _, value) HealPredictionDB.Absorbs.Height = value updateCallback() end)
+    AbsorbHeightSlider:SetDisabled(HealPredictionDB.Absorbs.MatchParentHeight or HealPredictionDB.Absorbs.Position == "ATTACH")
     AbsorbSettings:AddChild(AbsorbHeightSlider)
 
     local AbsorbPositionDropdown = AG:Create("Dropdown")
@@ -763,7 +883,7 @@ local function CreateHealPredictionSettings(containerParent, unit, updateCallbac
     AbsorbPositionDropdown:SetLabel("Position")
     AbsorbPositionDropdown:SetValue(HealPredictionDB.Absorbs.Position)
     AbsorbPositionDropdown:SetRelativeWidth(0.33)
-    AbsorbPositionDropdown:SetCallback("OnValueChanged", function(_, _, value) HealPredictionDB.Absorbs.Position = value updateCallback() end)
+    AbsorbPositionDropdown:SetCallback("OnValueChanged", function(_, _, value) HealPredictionDB.Absorbs.Position = value updateCallback() RefreshHealPredictionSettings() end)
     AbsorbSettings:AddChild(AbsorbPositionDropdown)
 
     local HealAbsorbSettings = GUIWidgets.CreateInlineGroup(containerParent, "Heal Absorb Settings")
@@ -771,15 +891,22 @@ local function CreateHealPredictionSettings(containerParent, unit, updateCallbac
     ShowHealAbsorbToggle:SetLabel("Show Heal Absorbs")
     ShowHealAbsorbToggle:SetValue(HealPredictionDB.HealAbsorbs.Enabled)
     ShowHealAbsorbToggle:SetCallback("OnValueChanged", function(_, _, value) HealPredictionDB.HealAbsorbs.Enabled = value updateCallback() RefreshHealPredictionSettings() end)
-    ShowHealAbsorbToggle:SetRelativeWidth(0.5)
+    ShowHealAbsorbToggle:SetRelativeWidth(0.33)
     HealAbsorbSettings:AddChild(ShowHealAbsorbToggle)
 
     local UseStripedTextureHealAbsorbToggle = AG:Create("CheckBox")
     UseStripedTextureHealAbsorbToggle:SetLabel("Use Striped Texture")
     UseStripedTextureHealAbsorbToggle:SetValue(HealPredictionDB.HealAbsorbs.UseStripedTexture)
     UseStripedTextureHealAbsorbToggle:SetCallback("OnValueChanged", function(_, _, value) HealPredictionDB.HealAbsorbs.UseStripedTexture = value updateCallback() end)
-    UseStripedTextureHealAbsorbToggle:SetRelativeWidth(0.5)
+    UseStripedTextureHealAbsorbToggle:SetRelativeWidth(0.33)
     HealAbsorbSettings:AddChild(UseStripedTextureHealAbsorbToggle)
+
+    local MatchParentHeightHealAbsorbToggle = AG:Create("CheckBox")
+    MatchParentHeightHealAbsorbToggle:SetLabel("Match Parent Height")
+    MatchParentHeightHealAbsorbToggle:SetValue(HealPredictionDB.HealAbsorbs.MatchParentHeight)
+    MatchParentHeightHealAbsorbToggle:SetCallback("OnValueChanged", function(_, _, value) HealPredictionDB.HealAbsorbs.MatchParentHeight = value updateCallback() RefreshHealPredictionSettings() end)
+    MatchParentHeightHealAbsorbToggle:SetRelativeWidth(0.33)
+    HealAbsorbSettings:AddChild(MatchParentHeightHealAbsorbToggle)
 
     local HealAbsorbColourPicker = AG:Create("ColorPicker")
     HealAbsorbColourPicker:SetLabel("Heal Absorb Colour")
@@ -796,6 +923,7 @@ local function CreateHealPredictionSettings(containerParent, unit, updateCallbac
     HealAbsorbHeightSlider:SetSliderValues(1, FrameDB.Height - 2, 0.1)
     HealAbsorbHeightSlider:SetRelativeWidth(0.33)
     HealAbsorbHeightSlider:SetCallback("OnValueChanged", function(_, _, value) HealPredictionDB.HealAbsorbs.Height = value updateCallback() end)
+    HealAbsorbHeightSlider:SetDisabled(HealPredictionDB.HealAbsorbs.MatchParentHeight or HealPredictionDB.HealAbsorbs.Position == "ATTACH")
     HealAbsorbSettings:AddChild(HealAbsorbHeightSlider)
 
     local HealAbsorbPositionDropdown = AG:Create("Dropdown")
@@ -803,12 +931,14 @@ local function CreateHealPredictionSettings(containerParent, unit, updateCallbac
     HealAbsorbPositionDropdown:SetLabel("Position")
     HealAbsorbPositionDropdown:SetValue(HealPredictionDB.HealAbsorbs.Position)
     HealAbsorbPositionDropdown:SetRelativeWidth(0.33)
-    HealAbsorbPositionDropdown:SetCallback("OnValueChanged", function(_, _, value) HealPredictionDB.HealAbsorbs.Position = value updateCallback() end)
+    HealAbsorbPositionDropdown:SetCallback("OnValueChanged", function(_, _, value) HealPredictionDB.HealAbsorbs.Position = value updateCallback() RefreshHealPredictionSettings() end)
     HealAbsorbSettings:AddChild(HealAbsorbPositionDropdown)
 
     function RefreshHealPredictionSettings()
         GUIWidgets.DeepDisable(AbsorbSettings, not HealPredictionDB.Absorbs.Enabled, ShowAbsorbToggle)
         GUIWidgets.DeepDisable(HealAbsorbSettings, not HealPredictionDB.HealAbsorbs.Enabled, ShowHealAbsorbToggle)
+        AbsorbHeightSlider:SetDisabled(HealPredictionDB.Absorbs.MatchParentHeight or HealPredictionDB.Absorbs.Position == "ATTACH")
+        HealAbsorbHeightSlider:SetDisabled(HealPredictionDB.HealAbsorbs.MatchParentHeight or HealPredictionDB.HealAbsorbs.Position == "ATTACH")
     end
 
     RefreshHealPredictionSettings()
@@ -2252,48 +2382,84 @@ local function CreateSpecificAuraSettings(containerParent, unit, auraDB)
     Toggle:SetRelativeWidth(0.33)
     AuraContainer:AddChild(Toggle)
 
-    local OnlyShowPlayerToggle = AG:Create("CheckBox")
-    OnlyShowPlayerToggle:SetLabel("Only Show Player "..auraDB)
-    OnlyShowPlayerToggle:SetValue(AuraDB.OnlyShowPlayer)
-    OnlyShowPlayerToggle:SetCallback("OnValueChanged", function(_, _, value) AuraDB.OnlyShowPlayer = value if unit == "boss" then UUF:UpdateBossFrames() else UUF:UpdateUnitAuras(UUF[unit:upper()], unit, auraDB) end end)
-    OnlyShowPlayerToggle:SetRelativeWidth(0.33)
-    AuraContainer:AddChild(OnlyShowPlayerToggle)
+    -- local OnlyShowPlayerToggle = AG:Create("CheckBox")
+    -- OnlyShowPlayerToggle:SetLabel("Only Show Player "..auraDB)
+    -- OnlyShowPlayerToggle:SetValue(AuraDB.OnlyShowPlayer)
+    -- OnlyShowPlayerToggle:SetCallback("OnValueChanged", function(_, _, value) AuraDB.OnlyShowPlayer = value if unit == "boss" then UUF:UpdateBossFrames() else UUF:UpdateUnitAuras(UUF[unit:upper()], unit, auraDB) end end)
+    -- OnlyShowPlayerToggle:SetRelativeWidth(0.33)
+    -- AuraContainer:AddChild(OnlyShowPlayerToggle)
 
-    local ShowTypeCheckbox = AG:Create("CheckBox")
-    ShowTypeCheckbox:SetLabel(auraDB .. " Type Border")
-    ShowTypeCheckbox:SetValue(AuraDB.ShowType)
-    ShowTypeCheckbox:SetCallback("OnValueChanged", function(_, _, value) AuraDB.ShowType = value if unit == "boss" then UUF:UpdateBossFrames() else UUF:UpdateUnitAuras(UUF[unit:upper()], unit, auraDB) end end)
-    ShowTypeCheckbox:SetRelativeWidth(0.33)
-    AuraContainer:AddChild(ShowTypeCheckbox)
+    -- local ShowTypeCheckbox = AG:Create("CheckBox")
+    -- ShowTypeCheckbox:SetLabel(auraDB .. " Type Border")
+    -- ShowTypeCheckbox:SetValue(AuraDB.ShowType)
+    -- ShowTypeCheckbox:SetCallback("OnValueChanged", function(_, _, value) AuraDB.ShowType = value if unit == "boss" then UUF:UpdateBossFrames() else UUF:UpdateUnitAuras(UUF[unit:upper()], unit, auraDB) end end)
+    -- ShowTypeCheckbox:SetRelativeWidth(0.33)
+    -- AuraContainer:AddChild(ShowTypeCheckbox)
 
-    local FilterDropdown = AG:Create("Dropdown")
-    if auraDB == "Buffs" then
-        FilterDropdown:SetList({
-            ["HELPFUL"] = "All",
-            ["HELPFUL|PLAYER"] = "Player",
-            ["HELPFUL|RAID"] = "Raid",
-            ["INCLUDE_NAME_PLATE_ONLY"] = "Nameplate",
-        })
-    else
-        FilterDropdown:SetList({
-            ["HARMFUL"] = "All",
-            ["HARMFUL|PLAYER"] = "Player",
-            ["HARMFUL|RAID"] = "Raid",
-            ["INCLUDE_NAME_PLATE_ONLY"] = "Nameplate",
-        })
-    end
-    FilterDropdown:SetLabel("Aura Filter")
-    FilterDropdown:SetValue(AuraDB.Filter or (auraDB == "Buffs" and "HELPFUL" or "HARMFUL"))
-    FilterDropdown:SetRelativeWidth(1.0)
-    FilterDropdown:SetCallback("OnValueChanged", function(_, _, value)
-        AuraDB.Filter = value
+    local auraBaseFilter = GetAuraBaseFilter(auraDB)
+    local auraFilterConfig = GetAuraFilterConfig(auraDB)
+    local auraFilterOrder = GetAuraFilterToggleOrder(auraDB)
+    local auraFilterSelections = ParseAuraFilterSelections(auraDB, AuraDB.Filter or auraBaseFilter)
+    local auraFilterToggles = {}
+    local isUpdatingAuraFilterToggles = false
+
+    local function UpdateAuraFilter()
+        local builtFilter = BuildAuraFilterString(auraBaseFilter, auraFilterSelections, auraFilterOrder)
+        AuraDB.Filter = EncodeAuraFilterStringForStorage(builtFilter)
         if unit == "boss" then
             UUF:UpdateBossFrames()
         else
             UUF:UpdateUnitAuras(UUF[unit:upper()], unit, auraDB)
         end
-    end)
-    AuraContainer:AddChild(FilterDropdown)
+    end
+
+    local function RefreshAuraFilterToggles()
+        local selectedFilter = GetSelectedAuraFilter(auraFilterSelections, auraFilterOrder)
+        isUpdatingAuraFilterToggles = true
+        for _, filterType in ipairs(auraFilterOrder) do
+            local filterToggle = auraFilterToggles[filterType]
+            if filterToggle then
+                filterToggle:SetValue(auraFilterSelections[filterType] or false)
+                filterToggle:SetDisabled(selectedFilter and selectedFilter ~= filterType)
+            end
+        end
+        isUpdatingAuraFilterToggles = false
+    end
+
+    local normalizedAuraFilter = EncodeAuraFilterStringForStorage(BuildAuraFilterString(auraBaseFilter, auraFilterSelections, auraFilterOrder))
+    if AuraDB.Filter ~= normalizedAuraFilter then
+        AuraDB.Filter = normalizedAuraFilter
+        if unit == "boss" then
+            UUF:UpdateBossFrames()
+        else
+            UUF:UpdateUnitAuras(UUF[unit:upper()], unit, auraDB)
+        end
+    end
+
+    GUIWidgets.CreateHeader(AuraContainer, "Aura Filters")
+
+    for _, auraFilter in ipairs(auraFilterOrder) do
+        local filterType = auraFilter
+        local filterData = auraFilterConfig[filterType]
+        local FilterToggle = AG:Create("CheckBox")
+        FilterToggle:SetLabel(filterData.Title or filterType)
+        FilterToggle:SetDescription(filterData.Desc or "")
+        FilterToggle:SetValue(auraFilterSelections[filterType] or false)
+        FilterToggle:SetRelativeWidth(1.0)
+        FilterToggle:SetCallback("OnValueChanged", function(_, _, value)
+            if isUpdatingAuraFilterToggles then return end
+            if value then
+                SetSelectedAuraFilter(auraFilterSelections, auraFilterOrder, filterType)
+            else
+                auraFilterSelections[filterType] = nil
+            end
+            RefreshAuraFilterToggles()
+            UpdateAuraFilter()
+        end)
+        auraFilterToggles[filterType] = FilterToggle
+        AuraContainer:AddChild(FilterToggle)
+    end
+    RefreshAuraFilterToggles()
 
     local LayoutContainer = GUIWidgets.CreateInlineGroup(containerParent, "Layout & Positioning")
 
@@ -2441,6 +2607,7 @@ local function CreateSpecificAuraSettings(containerParent, unit, auraDB)
             GUIWidgets.DeepDisable(AuraContainer, false, Toggle)
             GUIWidgets.DeepDisable(LayoutContainer, false, Toggle)
             GUIWidgets.DeepDisable(CountContainer, false, Toggle)
+            RefreshAuraFilterToggles()
         else
             GUIWidgets.DeepDisable(AuraContainer, true, Toggle)
             GUIWidgets.DeepDisable(LayoutContainer, true, Toggle)
